@@ -2,20 +2,37 @@
 
 A lightweight Docker management CLI and web dashboard.
 
-## Setup
+## Installation
 
-Clone the repo, build, and add an alias to your shell config:
-
-```bash
-cd docker-tooling
-go build -o dk ./cmd/dk/
-```
+Download the latest binary from the [releases page](https://github.com/jimbarrett/dk/releases), then:
 
 ```bash
-alias dk='/path/to/docker-tooling/dk'
+chmod +x dk_*
+mv dk_* ~/.local/bin/dk
 ```
 
-Requires Go 1.21+ (build only) and Docker.
+If `~/.local/bin` is not on your PATH, add this to your shell profile:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Requires Docker.
+
+### Building from source
+
+```bash
+git clone git@github.com:jimbarrett/dk.git
+cd dk
+make build
+cp dk ~/.local/bin/dk
+```
+
+### Updating
+
+```bash
+dk update
+```
 
 ## CLI Usage
 
@@ -35,6 +52,8 @@ dk rmi          Remove an image (-f to force)
 dk clean        Prune stopped containers, dangling images, unused volumes
 dk web          Launch web dashboard (default port 8080)
 dk web stop     Stop the web dashboard
+dk version      Show version and check for updates
+dk update       Update to the latest version
 dk help         Show help
 ```
 
