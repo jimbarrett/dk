@@ -1,0 +1,14 @@
+{
+    "name": "barrett/dk",
+    "description": "Lightweight Docker management CLI and web UI",
+    "type": "project",
+    "autoload": {
+        "psr-4": {
+            "Dk\\": "src/"
+        }
+    },
+    "bin": ["bin/dk"],
+    "require": {
+        "php": ">=8.1"
+    }
+}

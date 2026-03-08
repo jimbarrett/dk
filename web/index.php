@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dk — Docker Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>dk</h1>
+            <p id="status-line">Loading...</p>
+        </header>
+
+        <div id="dashboard"></div>
+    </main>
+
+    <script>
+        const API = 'api.php';
+        let refreshTimer;
+
+        async function fetchContainers() {
+            try {
+                const res = await fetch(`${API}?action=list`);
+                const data = await res.json();
+                render(data);
+            } catch (err) {
+                document.getElementById('status-line').textContent = 'Error connecting to Docker';
+            }
+        }
+
+        function render(data) {
+            const dashboard = document.getElementById('dashboard');
+            let totalRunning = 0;
+            let totalContainers = 0;
+
+            let html = '';
+
+            for (const project of data.projects) {
+                totalRunning += project.running;
+                totalContainers += project.total;
+                html += renderProject(project);
+            }
+
+            if (data.ungrouped.length > 0) {
+                totalContainers += data.ungrouped.length;
+                const ungroupedRunning = data.ungrouped.filter(c => c.state === 'running').length;
+                totalRunning += ungroupedRunning;
+                html += renderUngrouped(data.ungrouped, ungroupedRunning);
+            }
+
+            dashboard.innerHTML = html;
+            document.getElementById('status-line').textContent =
+                `${totalRunning} running / ${totalContainers} total containers`;
+
+            document.querySelectorAll('[data-action]').forEach(btn => {
+                btn.addEventListener('click', handleAction);
+            });
+        }
+
+        function renderProject(project) {
+            const statusClass = project.running === project.total ? 'status-ok' : 'status-partial';
+            const statusText = `${project.running}/${project.total} running`;
+
+            return `
+                <article class="project-group">
+                    <header>
+                        <div class="project-header">
+                            <h3>${esc(project.name)}</h3>
+                            <span class="badge ${statusClass}">${statusText}</span>
+                        </div>
+                        <div class="project-actions">
+                            ${projectButtons(project)}
+                        </div>
+                    </header>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Service</th>
+                                <th>Image</th>
+                                <th>Status</th>
+                                <th>Ports</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${project.containers.map(c => renderRow(c)).join('')}
+                        </tbody>
+                    </table>
+                </article>`;
+        }
+
+        function renderUngrouped(containers, running) {
+            return `
+                <article class="project-group">
+                    <header>
+                        <div class="project-header">
+                            <h3>Ungrouped</h3>
+                            <span class="badge status-partial">${running}/${containers.length} running</span>
+                        </div>
+                    </header>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Container</th>
+                                <th>Image</th>
+                                <th>Status</th>
+                                <th>Ports</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${containers.map(c => renderRow(c)).join('')}
+                        </tbody>
+                    </table>
+                </article>`;
+        }
+
+        function renderRow(container) {
+            const stateClass = container.state === 'running' ? 'dot-running' : 'dot-stopped';
+            const ports = container.ports.map(p => {
+                const hostPort = p.split('->')[0];
+                return `<a href="http://localhost:${hostPort}" target="_blank">${esc(p)}</a>`;
+            }).join(', ');
+
+            return `
+                <tr>
+                    <td><span class="dot ${stateClass}"></span></td>
+                    <td>${esc(container.display)}</td>
+                    <td><code>${esc(container.image)}</code></td>
+                    <td>${esc(container.status)}</td>
+                    <td>${ports || '—'}</td>
+                    <td class="action-buttons">
+                        ${containerButtons(container)}
+                    </td>
+                </tr>`;
+        }
+
+        function containerButtons(c) {
+            if (c.state === 'running') {
+                return `
+                    <button class="btn-sm outline" data-action="stop" data-container="${esc(c.name)}">Stop</button>
+                    <button class="btn-sm outline" data-action="restart" data-container="${esc(c.name)}">Restart</button>`;
+            }
+            return `
+                <button class="btn-sm outline" data-action="start" data-container="${esc(c.name)}">Start</button>
+                <button class="btn-sm outline contrast" data-action="remove" data-container="${esc(c.name)}">Remove</button>`;
+        }
+
+        function projectButtons(project) {
+            const hasRunning = project.running > 0;
+            const hasStopped = project.running < project.total;
+            let btns = '';
+            if (hasRunning) {
+                const names = project.containers.filter(c => c.state === 'running').map(c => c.name).join(',');
+                btns += `<button class="btn-sm outline" data-action="stop" data-container="${names}">Stop All</button>`;
+            }
+            if (hasRunning) {
+                const names = project.containers.filter(c => c.state === 'running').map(c => c.name).join(',');
+                btns += `<button class="btn-sm outline" data-action="restart" data-container="${names}">Restart All</button>`;
+            }
+            if (hasStopped) {
+                const names = project.containers.filter(c => c.state !== 'running').map(c => c.name).join(',');
+                btns += `<button class="btn-sm outline" data-action="start" data-container="${names}">Start All</button>`;
+            }
+            return btns;
+        }
+
+        async function handleAction(e) {
+            const btn = e.target;
+            const action = btn.dataset.action;
+            const containers = btn.dataset.container.split(',');
+
+            btn.setAttribute('aria-busy', 'true');
+            btn.disabled = true;
+
+            for (const container of containers) {
+                await fetch(`${API}?action=${action}&container=${encodeURIComponent(container)}`);
+            }
+
+            // Brief delay for Docker to update state, then refresh
+            setTimeout(() => {
+                fetchContainers();
+            }, 500);
+        }
+
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Initial load and auto-refresh
+        fetchContainers();
+        refreshTimer = setInterval(fetchContainers, 5000);
+
+        // Pause polling when tab is hidden, resume when visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                clearInterval(refreshTimer);
+            } else {
+                fetchContainers();
+                refreshTimer = setInterval(fetchContainers, 5000);
+            }
+        });
+    </script>
+</body>
+</html>
