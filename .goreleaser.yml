@@ -1,0 +1,43 @@
+version: 2
+
+builds:
+  - main: ./cmd/dk
+    binary: dk
+    ldflags:
+      - -s -w -X main.version={{.Tag}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: binary
+    name_template: "dk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+release:
+  header: |
+    ## Installation
+
+    Download the binary for your platform below, then:
+
+    ```bash
+    chmod +x dk_*
+    mv dk_* ~/.local/bin/dk
+    ```
+
+    If `~/.local/bin` is not on your PATH, add this to your shell profile:
+
+    ```bash
+    export PATH="$HOME/.local/bin:$PATH"
+    ```
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

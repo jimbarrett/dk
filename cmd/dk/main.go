@@ -12,8 +12,11 @@ import (
 
 	"github.com/barrett/dk/internal/docker"
 	"github.com/barrett/dk/internal/server"
+	"github.com/barrett/dk/internal/update"
 	"github.com/barrett/dk/web"
 )
+
+var version = "dev"
 
 func main() {
 	command := ""
@@ -52,6 +55,10 @@ func main() {
 		cmdWeb(args)
 	case "_serve":
 		cmdServe(args)
+	case "version", "--version", "-v":
+		cmdVersion()
+	case "update":
+		cmdUpdate()
 	case "help":
 		cmdHelp()
 	default:
@@ -291,6 +298,46 @@ func cmdClean() {
 	fmt.Println("\033[32mDone.\033[0m")
 }
 
+func cmdVersion() {
+	fmt.Printf("dk %s\n", version)
+	info, err := update.Check(version)
+	if err == nil && info.UpdateAvailable {
+		fmt.Printf("Update available: %s (%s)\n", info.LatestVersion, info.ReleaseURL)
+		fmt.Println("Run 'dk update' to update.")
+	} else if err == nil {
+		fmt.Println("You are running the latest version.")
+	}
+}
+
+func cmdUpdate() {
+	fmt.Println("Checking for updates...")
+	info, err := update.Check(version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+	if !info.UpdateAvailable {
+		fmt.Printf("Already up to date (%s).\n", version)
+		return
+	}
+	if info.DownloadURL == "" {
+		fmt.Fprintf(os.Stderr, "No binary available for your platform (%s).\n", update.AssetName(info.LatestVersion))
+		os.Exit(1)
+	}
+	binaryPath, writable := update.CanWriteBinary()
+	if !writable {
+		fmt.Fprintf(os.Stderr, "Cannot write to %s (permission denied).\n", binaryPath)
+		fmt.Fprintf(os.Stderr, "Run this command to update manually:\n  %s\n", update.ManualUpdateCommand(info.DownloadURL, binaryPath))
+		os.Exit(1)
+	}
+	fmt.Printf("Downloading %s...\n", info.LatestVersion)
+	if err := update.Apply(info.DownloadURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\033[32mUpdated to %s.\033[0m\n", info.LatestVersion)
+}
+
 func cmdWeb(args []string) {
 	if len(args) > 0 && args[0] == "stop" {
 		cmdWebStop()
@@ -402,6 +449,8 @@ Commands:
   clean       Prune stopped containers, dangling images, volumes
   web         Launch web UI (optional port, default 8080)
   web stop    Stop the web UI
+  version     Show version and check for updates
+  update      Update to the latest version
   help        Show this help
 
 Container names support partial matching. Omit the name for interactive selection.
