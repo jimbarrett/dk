@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -344,11 +345,6 @@ func cmdWeb(args []string) {
 		return
 	}
 
-	port := "8080"
-	if len(args) > 0 {
-		port = args[0]
-	}
-
 	pidFile := pidFilePath()
 
 	// Check if already running
@@ -356,6 +352,17 @@ func cmdWeb(args []string) {
 		fmt.Printf("dk web is already running (PID %d) on port %s\n", pid, p)
 		fmt.Println("Run 'dk web stop' to stop it.")
 		return
+	}
+
+	// Find an available port
+	startPort := 10100
+	if len(args) > 0 {
+		fmt.Sscanf(args[0], "%d", &startPort)
+	}
+	port, err := findAvailablePort(startPort)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
 	}
 
 	// Fork a background process using exec.Command for proper PID tracking
@@ -590,4 +597,16 @@ func filterOut(args []string, flag string) []string {
 		}
 	}
 	return result
+}
+
+func findAvailablePort(startPort int) (string, error) {
+	for port := startPort; port < startPort+100; port++ {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			continue
+		}
+		ln.Close()
+		return fmt.Sprintf("%d", port), nil
+	}
+	return "", fmt.Errorf("no available port found in range %d-%d", startPort, startPort+99)
 }
