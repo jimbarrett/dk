@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -389,7 +390,10 @@ func cmdWeb(args []string) {
 	// Write PID file from the parent since we know the child PID immediately
 	writePidFile(pidFile, pid, port)
 
-	fmt.Printf("dk web UI started on \033[1mhttp://localhost:%s\033[0m (PID %d)\n", port, pid)
+	url := fmt.Sprintf("http://localhost:%s", port)
+	openBrowser(url)
+
+	fmt.Printf("dk web UI started on \033[1m%s\033[0m (PID %d)\n", url, pid)
 	fmt.Println("Run 'dk web stop' to stop it.")
 }
 
@@ -601,6 +605,19 @@ func filterOut(args []string, flag string) []string {
 		}
 	}
 	return result
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
 }
 
 func findAvailablePort(startPort int) (string, error) {
