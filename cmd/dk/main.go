@@ -101,6 +101,10 @@ func cmdStatus() {
 		}
 		printContainerTable(active)
 	}
+
+	if _, port := readPidFile(pidFilePath()); port != "" {
+		fmt.Printf("\n  Web UI:   \033[1mhttp://localhost:%s\033[0m\n", port)
+	}
 }
 
 func cmdList(args []string) {
