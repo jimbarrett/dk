@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 
 	"github.com/barrett/dk/internal/docker"
@@ -20,6 +21,18 @@ func Start(port string, webFS fs.FS) error {
 	addr := ":" + port
 	fmt.Printf("dk web UI running on http://localhost%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+// StartWithListener launches the web server using an existing listener.
+func StartWithListener(ln net.Listener, webFS fs.FS) error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/list", handleList)
+	mux.HandleFunc("/api/action", handleAction)
+	mux.Handle("/", http.FileServer(http.FS(webFS)))
+
+	fmt.Printf("dk web UI running on http://%s\n", ln.Addr())
+	return http.Serve(ln, mux)
 }
 
 func handleList(w http.ResponseWriter, r *http.Request) {

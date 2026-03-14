@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/barrett/dk/internal/docker"
 	"github.com/barrett/dk/internal/server"
@@ -359,38 +362,66 @@ func cmdWeb(args []string) {
 		return
 	}
 
-	// Find an available port
+	// Find an available port — keep the listener open to prevent races
 	startPort := 10100
 	if len(args) > 0 {
 		fmt.Sscanf(args[0], "%d", &startPort)
 	}
-	port, err := findAvailablePort(startPort)
+	ln, port, err := listenAvailablePort(startPort)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}
 
-	// Fork a background process using exec.Command for proper PID tracking
+	// Get the file descriptor for the listener to pass to the child
+	lnFile, err := ln.(*net.TCPListener).File()
+	if err != nil {
+		ln.Close()
+		fmt.Fprintf(os.Stderr, "Failed to get listener fd: %s\n", err)
+		os.Exit(1)
+	}
+
+	// Fork a background process, passing the listener as an extra fd
 	exe, _ := os.Executable()
-	cmd := exec.Command(exe, "_serve", port)
+	cmd := exec.Command(exe, "_serve", "--fd", "3", port)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	// Detach from terminal
+	cmd.ExtraFiles = []*os.File{lnFile} // fd 3 in the child
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+
+	// Log child stderr to a file for debugging
+	logFile, err := os.OpenFile(logFilePath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err == nil {
+		cmd.Stderr = logFile
+	}
 
 	if err := cmd.Start(); err != nil {
+		ln.Close()
 		fmt.Fprintf(os.Stderr, "Failed to start background server: %s\n", err)
 		os.Exit(1)
 	}
 
 	pid := cmd.Process.Pid
 	cmd.Process.Release()
+	lnFile.Close() // parent closes its copy; child still has it
+	ln.Close()     // parent closes its copy of the listener
+
+	if logFile != nil {
+		logFile.Close()
+	}
 
 	// Write PID file from the parent since we know the child PID immediately
 	writePidFile(pidFile, pid, port)
 
+	// Wait for the server to actually be ready before opening the browser
 	url := fmt.Sprintf("http://localhost:%s", port)
+	if !waitForServer(url, 3*time.Second) {
+		// Server didn't start — clean up
+		os.Remove(pidFile)
+		fmt.Fprintf(os.Stderr, "Server failed to start. Check logs: %s\n", logFilePath())
+		os.Exit(1)
+	}
+
 	openBrowser(url)
 
 	fmt.Printf("dk web UI started on \033[1m%s\033[0m (PID %d)\n", url, pid)
@@ -424,11 +455,6 @@ func cmdWebStop() {
 }
 
 func cmdServe(args []string) {
-	port := "8080"
-	if len(args) > 0 {
-		port = args[0]
-	}
-
 	// Clean up PID file on exit
 	defer os.Remove(pidFilePath())
 
@@ -438,6 +464,32 @@ func cmdServe(args []string) {
 		os.Exit(1)
 	}
 
+	// Check if we were passed a listener fd (--fd 3)
+	if len(args) >= 2 && args[0] == "--fd" {
+		fd, err := strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid fd: %s\n", err)
+			os.Exit(1)
+		}
+		f := os.NewFile(uintptr(fd), "listener")
+		ln, err := net.FileListener(f)
+		f.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create listener from fd: %s\n", err)
+			os.Exit(1)
+		}
+		if err := server.StartWithListener(ln, webFS); err != nil {
+			fmt.Fprintf(os.Stderr, "Server error: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Fallback: bind port directly (for manual use)
+	port := "10100"
+	if len(args) > 0 {
+		port = args[0]
+	}
 	if err := server.Start(port, webFS); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %s\n", err)
 		os.Exit(1)
@@ -573,6 +625,8 @@ func readPidFile(path string) (int, string) {
 		return 0, ""
 	}
 
+	port := lines[1]
+
 	// Check if process is still running
 	process, err := os.FindProcess(pid)
 	if err != nil {
@@ -585,7 +639,35 @@ func readPidFile(path string) (int, string) {
 		return 0, ""
 	}
 
-	return pid, lines[1]
+	// Verify this is actually a dk process, not a recycled PID
+	if !isDkProcess(pid) {
+		os.Remove(path)
+		return 0, ""
+	}
+
+	// Verify the server is actually responding on the expected port
+	client := &http.Client{Timeout: 1 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%s/api/list", port))
+	if err != nil {
+		os.Remove(path)
+		return 0, ""
+	}
+	resp.Body.Close()
+
+	return pid, port
+}
+
+// isDkProcess checks if a PID belongs to a dk process by inspecting /proc/pid/cmdline.
+func isDkProcess(pid int) bool {
+	if runtime.GOOS != "linux" {
+		return true // can't verify on non-Linux, assume true
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	cmdline := string(data)
+	return strings.Contains(cmdline, "dk") && strings.Contains(cmdline, "_serve")
 }
 
 func contains(args []string, flag string) bool {
@@ -620,14 +702,34 @@ func openBrowser(url string) {
 	_ = cmd.Start()
 }
 
-func findAvailablePort(startPort int) (string, error) {
+// listenAvailablePort finds an available port and returns the open listener.
+// The caller is responsible for closing or passing the listener.
+func listenAvailablePort(startPort int) (net.Listener, string, error) {
 	for port := startPort; port < startPort+100; port++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			continue
 		}
-		ln.Close()
-		return fmt.Sprintf("%d", port), nil
+		return ln, fmt.Sprintf("%d", port), nil
 	}
-	return "", fmt.Errorf("no available port found in range %d-%d", startPort, startPort+99)
+	return nil, "", fmt.Errorf("no available port found in range %d-%d", startPort, startPort+99)
+}
+
+func logFilePath() string {
+	return filepath.Join(os.Getenv("HOME"), ".local", "share", "dk", "dk-web.log")
+}
+
+// waitForServer polls the server until it responds or the timeout expires.
+func waitForServer(url string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
 }
