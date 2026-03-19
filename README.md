@@ -50,7 +50,7 @@ dk ports        Show port mappings
 dk rm           Remove a container (-f to force)
 dk rmi          Remove an image (-f to force)
 dk clean        Prune stopped containers, dangling images, unused volumes
-dk web          Launch web dashboard (default port 8080)
+dk web          Launch web dashboard (auto-selects port starting at 10100)
 dk web stop     Stop the web dashboard
 dk version      Show version and check for updates
 dk update       Update to the latest version
@@ -62,9 +62,9 @@ All commands support partial name matching. Omit the container name for interact
 ## Web Dashboard
 
 ```bash
-dk web          # starts background server on http://localhost:8080
-dk web 9090     # custom port
+dk web          # starts background server (auto-selects port starting at 10100)
+dk web 9090     # start on a specific port
 dk web stop     # stop the server
 ```
 
-Runs as a background daemon — no terminal window needed. Shows containers grouped by Compose project with start/stop/restart controls and clickable port links. Auto-refreshes every 5 seconds.
+Runs as a background daemon — no terminal window needed. Auto-selects the first available port starting at 10100 (scans up to 100 ports). Shows containers grouped by Compose project with start/stop/restart controls and clickable port links. Auto-refreshes every 5 seconds.

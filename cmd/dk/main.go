@@ -514,7 +514,7 @@ Commands:
   rm          Remove a container (-f force)
   rmi         Remove an image (-f force)
   clean       Prune stopped containers, dangling images, volumes
-  web         Launch web UI (optional port, default 8080)
+  web         Launch web UI (optional port, default auto-selects from 10100)
   web stop    Stop the web UI
   version     Show version and check for updates
   update      Update to the latest version
